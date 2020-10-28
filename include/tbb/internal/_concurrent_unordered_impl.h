@@ -283,7 +283,7 @@ public:
 
     // Allocate a new node with the given order key; used to allocate dummy nodes
     nodeptr_t create_node(sokey_t order_key) {
-        nodeptr_t pnode = my_node_allocator.allocate(1);
+        nodeptr_t pnode = my_node_allocator_traits::allocate(my_node_allocator, 1);
         pnode->init(order_key);
         return (pnode);
     }
@@ -292,14 +292,17 @@ public:
     template<typename Arg>
     nodeptr_t create_node(sokey_t order_key, __TBB_FORWARDING_REF(Arg) t,
                           /*AllowCreate=*/tbb::internal::true_type=tbb::internal::true_type()){
-        nodeptr_t pnode = my_node_allocator.allocate(1);
+        nodeptr_t pnode = my_node_allocator_traits::allocate(my_node_allocator, 1);
 
         //TODO: use RAII scoped guard instead of explicit catch
         __TBB_TRY {
-            new(static_cast<void*>(&pnode->my_element)) T(tbb::internal::forward<Arg>(t));
+            my_node_allocator_traits::construct(
+                my_node_allocator,
+                &pnode->my_element,
+                tbb::internal::forward<Arg>(t));
             pnode->init(order_key);
         } __TBB_CATCH(...) {
-            my_node_allocator.deallocate(pnode, 1);
+            my_node_allocator_traits::deallocate(my_node_allocator, pnode, 1);
             __TBB_RETHROW();
         }
 
@@ -317,13 +320,16 @@ public:
     // Allocate a new node with the given parameters for constructing value
     template<typename __TBB_PARAMETER_PACK Args>
     nodeptr_t create_node_v( __TBB_FORWARDING_REF(Args) __TBB_PARAMETER_PACK args){
-        nodeptr_t pnode = my_node_allocator.allocate(1);
+        nodeptr_t pnode = my_node_allocator_traits::allocate(my_node_allocator, 1);
 
         //TODO: use RAII scoped guard instead of explicit catch
         __TBB_TRY {
-            new(static_cast<void*>(&pnode->my_element)) T(__TBB_PACK_EXPANSION(tbb::internal::forward<Args>(args)));
+            my_node_allocator_traits::construct(
+                my_node_allocator,
+                &pnode->my_element,
+                __TBB_PACK_EXPANSION(tbb::internal::forward<Args>(args)));
         } __TBB_CATCH(...) {
-            my_node_allocator.deallocate(pnode, 1);
+            my_node_allocator_traits::deallocate(my_node_allocator, pnode, 1);
             __TBB_RETHROW();
         }
 
@@ -415,7 +421,7 @@ public:
 
     // Returns the maximum size of the list, determined by the allocator
     size_type max_size() const {
-        return my_node_allocator.max_size();
+        return my_node_allocator_traits::max_size(my_node_allocator);
     }
 
     // Swaps 'this' list with the passed in one
@@ -508,8 +514,10 @@ public:
 
     // Erase an element using the allocator
     void destroy_node(nodeptr_t pnode) {
-        if (!pnode->is_dummy()) my_node_allocator.destroy(pnode);
-        my_node_allocator.deallocate(pnode, 1);
+        if (!pnode->is_dummy()) {
+            my_node_allocator_traits::destroy(my_node_allocator, &pnode->my_element);
+        }
+        my_node_allocator_traits::deallocate(my_node_allocator, pnode, 1);
     }
 
     // Try to insert a new element in the list.
@@ -692,7 +700,11 @@ private:
 #endif
     }
 
-    typename tbb::internal::allocator_rebind<allocator_type, node>::type my_node_allocator; // allocator object for nodes
+     // allocator used to allocate/deallocate nodes and construct/destruct a node's element
+    typedef typename tbb::internal::allocator_rebind<allocator_type, node>::type my_node_allocator_t;
+    typedef tbb::internal::allocator_traits<my_node_allocator_t> my_node_allocator_traits;
+    my_node_allocator_t my_node_allocator;
+
     size_type                                             my_element_count;   // Total item count, not counting dummy nodes
     nodeptr_t                                             my_head;            // pointer to head node
 };
